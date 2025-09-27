@@ -1,164 +1,249 @@
-import { useState, useEffect } from "react";
-import { TaskCard } from "@/components/TaskCard";
-import { AddTaskForm } from "@/components/AddTaskForm";
-import { TaskStats } from "@/components/TaskStats";
+import { useState, useEffect, useMemo } from "react";
+import { CampaignHeader } from "@/components/CampaignHeader";
+import { InventoryCard } from "@/components/InventoryCard";
+import { LocationCard } from "@/components/LocationCard";
+import { VisitModal } from "@/components/VisitModal";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { CheckSquare, Smartphone } from "lucide-react";
+import { Location, Visit, BoxColor, LocationStatus, InventoryItem, Campaign } from "@/types";
+import { BOX_COLORS } from "@/data/boxColors";
+import { Package, Search, MapPin, BarChart3 } from "lucide-react";
 
-interface Task {
-  id: string;
-  title: string;
-  description?: string;
-  completed: boolean;
-  createdAt: Date;
-}
+// Sample data - In real app, this would come from a database
+const SAMPLE_LOCATIONS: Location[] = Array.from({ length: 10 }, (_, i) => ({
+  id: `loc-${i + 1}`,
+  name: `Ubicación ${i + 1}`,
+  address: `Calle Ejemplo ${i + 1}, Madrid, España`,
+  coordinates: {
+    lat: 40.4168 + (Math.random() - 0.5) * 0.1,
+    lng: -3.7038 + (Math.random() - 0.5) * 0.1
+  }
+}));
 
 const Index = () => {
-  const [tasks, setTasks] = useState<Task[]>(() => {
-    const savedTasks = localStorage.getItem('taskflow-tasks');
-    if (savedTasks) {
-      return JSON.parse(savedTasks).map((task: any) => ({
-        ...task,
-        createdAt: new Date(task.createdAt)
+  const [visits, setVisits] = useState<Visit[]>(() => {
+    const savedVisits = localStorage.getItem('boxtracker-visits');
+    if (savedVisits) {
+      return JSON.parse(savedVisits).map((visit: any) => ({
+        ...visit,
+        date: new Date(visit.date),
+        createdAt: new Date(visit.createdAt),
+        updatedAt: new Date(visit.updatedAt)
       }));
     }
     return [];
   });
+
+  const [selectedLocationId, setSelectedLocationId] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [activeTab, setActiveTab] = useState("locations");
   const { toast } = useToast();
 
+  // Campaign state
+  const campaign: Campaign = {
+    currentRound: 1,
+    currentWeek: 1,
+    startDate: new Date(),
+    totalLocations: SAMPLE_LOCATIONS.length,
+    completedLocations: 0
+  };
+
   useEffect(() => {
-    localStorage.setItem('taskflow-tasks', JSON.stringify(tasks));
-  }, [tasks]);
+    localStorage.setItem('boxtracker-visits', JSON.stringify(visits));
+  }, [visits]);
 
-  const addTask = (title: string, description?: string) => {
-    const newTask: Task = {
+  // Calculate inventory
+  const inventory = useMemo((): InventoryItem[] => {
+    return BOX_COLORS.map(color => {
+      const colorVisits = visits.filter(v => v.colorId === color.id);
+      const proposed = colorVisits.filter(v => v.status === 'proposed').length;
+      const delivered = colorVisits.filter(v => v.status === 'delivered').length;
+      
+      return {
+        colorId: color.id,
+        available: color.stock - proposed - delivered,
+        proposed,
+        delivered
+      };
+    });
+  }, [visits]);
+
+  // Calculate location statuses
+  const locationStatuses = useMemo((): Record<string, LocationStatus> => {
+    const statuses: Record<string, LocationStatus> = {};
+    
+    SAMPLE_LOCATIONS.forEach(location => {
+      const locationVisits = visits.filter(v => v.locationId === location.id);
+      const colorsDelivered = [...new Set(
+        locationVisits
+          .filter(v => v.status === 'delivered')
+          .map(v => v.colorId)
+      )];
+      
+      const lastVisit = locationVisits
+        .sort((a, b) => b.date.getTime() - a.date.getTime())[0];
+
+      statuses[location.id] = {
+        locationId: location.id,
+        colorsDelivered,
+        totalProposed: locationVisits.filter(v => v.status === 'proposed').length,
+        totalDelivered: locationVisits.filter(v => v.status === 'delivered').length,
+        lastVisitDate: lastVisit?.date
+      };
+    });
+
+    return statuses;
+  }, [visits]);
+
+  const handleVisit = (locationId: string) => {
+    setSelectedLocationId(locationId);
+  };
+
+  const handleVisitSubmit = (visitData: {
+    locationId: string;
+    colorId: string;
+    status: 'proposed' | 'delivered';
+    photo?: string;
+    notes?: string;
+  }) => {
+    const newVisit: Visit = {
       id: crypto.randomUUID(),
-      title,
-      description,
-      completed: false,
-      createdAt: new Date()
+      ...visitData,
+      round: campaign.currentRound,
+      week: campaign.currentWeek,
+      date: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date()
     };
-    setTasks(prev => [newTask, ...prev]);
+
+    setVisits(prev => [newVisit, ...prev]);
+    setSelectedLocationId(null);
+
+    const colorName = BOX_COLORS.find(c => c.id === visitData.colorId)?.name;
+    const locationName = SAMPLE_LOCATIONS.find(l => l.id === visitData.locationId)?.name;
+
     toast({
-      title: "Tarea agregada",
-      description: "Tu nueva tarea ha sido creada exitosamente.",
+      title: visitData.status === 'delivered' ? "Entrega registrada" : "Propuesta registrada",
+      description: `${colorName} - ${locationName}`,
     });
   };
 
-  const toggleTaskComplete = (id: string) => {
-    setTasks(prev => prev.map(task => {
-      if (task.id === id) {
-        const updatedTask = { ...task, completed: !task.completed };
-        toast({
-          title: updatedTask.completed ? "Tarea completada" : "Tarea pendiente",
-          description: updatedTask.completed 
-            ? "¡Excelente trabajo!" 
-            : "Tarea marcada como pendiente.",
-        });
-        return updatedTask;
-      }
-      return task;
-    }));
-  };
+  const filteredLocations = SAMPLE_LOCATIONS.filter(location => 
+    location.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    location.address.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
-  const deleteTask = (id: string) => {
-    setTasks(prev => prev.filter(task => task.id !== id));
-    toast({
-      title: "Tarea eliminada",
-      description: "La tarea ha sido eliminada exitosamente.",
-      variant: "destructive"
-    });
-  };
+  const totalProposed = visits.filter(v => v.status === 'proposed').length;
+  const totalDelivered = visits.filter(v => v.status === 'delivered').length;
 
-  const pendingTasks = tasks.filter(task => !task.completed);
-  const completedTasks = tasks.filter(task => task.completed);
+  const selectedLocation = selectedLocationId 
+    ? SAMPLE_LOCATIONS.find(l => l.id === selectedLocationId) 
+    : null;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5">
-      <div className="container max-w-md mx-auto px-4 py-6">
+      <div className="container max-w-4xl mx-auto px-4 py-6">
         {/* Header */}
-        <div className="text-center mb-8">
-          <div className="flex items-center justify-center gap-3 mb-4">
-            <div className="p-3 bg-gradient-to-br from-primary to-primary-glow rounded-2xl shadow-lg">
-              <CheckSquare className="h-8 w-8 text-primary-foreground" />
+        <CampaignHeader 
+          campaign={campaign}
+          totalProposed={totalProposed}
+          totalDelivered={totalDelivered}
+        />
+
+        {/* Tabs */}
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList className="grid w-full grid-cols-3 mb-6">
+            <TabsTrigger value="locations" className="flex items-center gap-2">
+              <MapPin className="h-4 w-4" />
+              Ubicaciones
+            </TabsTrigger>
+            <TabsTrigger value="inventory" className="flex items-center gap-2">
+              <Package className="h-4 w-4" />
+              Inventario
+            </TabsTrigger>
+            <TabsTrigger value="analytics" className="flex items-center gap-2">
+              <BarChart3 className="h-4 w-4" />
+              Estadísticas
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="locations" className="space-y-4">
+            {/* Search */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Buscar ubicaciones..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10"
+              />
             </div>
-            <div>
-              <h1 className="text-3xl font-bold bg-gradient-to-r from-primary to-primary-glow bg-clip-text text-transparent">
-                TaskFlow
-              </h1>
-              <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                <Smartphone className="h-4 w-4" />
-                <span>Seguimiento móvil</span>
+
+            {/* Locations Grid */}
+            <div className="grid gap-4">
+              {filteredLocations.map(location => (
+                <LocationCard
+                  key={location.id}
+                  location={location}
+                  status={locationStatuses[location.id]}
+                  recentVisits={visits.filter(v => v.locationId === location.id).slice(0, 3)}
+                  colors={BOX_COLORS}
+                  onVisit={handleVisit}
+                />
+              ))}
+            </div>
+
+            {filteredLocations.length === 0 && (
+              <div className="text-center py-12">
+                <MapPin className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
+                <h3 className="text-xl font-semibold text-foreground mb-2">
+                  No se encontraron ubicaciones
+                </h3>
+                <p className="text-muted-foreground">
+                  Intenta con otros términos de búsqueda.
+                </p>
               </div>
-            </div>
-          </div>
-        </div>
+            )}
+          </TabsContent>
 
-        {/* Stats */}
-        <TaskStats tasks={tasks} />
-
-        {/* Add Task Form */}
-        <div className="mb-6">
-          <AddTaskForm onAddTask={addTask} />
-        </div>
-
-        {/* Tasks List */}
-        <div className="space-y-6">
-          {/* Pending Tasks */}
-          {pendingTasks.length > 0 && (
-            <div>
-              <h2 className="text-lg font-semibold text-foreground mb-4 flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-accent"></div>
-                Tareas Pendientes ({pendingTasks.length})
-              </h2>
-              <div>
-                {pendingTasks.map(task => (
-                  <TaskCard
-                    key={task.id}
-                    task={task}
-                    onToggleComplete={toggleTaskComplete}
-                    onDelete={deleteTask}
+          <TabsContent value="inventory" className="space-y-4">
+            <div className="grid md:grid-cols-2 gap-4">
+              {BOX_COLORS.map(color => {
+                const colorInventory = inventory.find(i => i.colorId === color.id)!;
+                return (
+                  <InventoryCard
+                    key={color.id}
+                    color={color}
+                    inventory={colorInventory}
                   />
-                ))}
-              </div>
+                );
+              })}
             </div>
-          )}
+          </TabsContent>
 
-          {/* Completed Tasks */}
-          {completedTasks.length > 0 && (
-            <div>
-              <h2 className="text-lg font-semibold text-foreground mb-4 flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-success"></div>
-                Completadas ({completedTasks.length})
-              </h2>
-              <div>
-                {completedTasks.map(task => (
-                  <TaskCard
-                    key={task.id}
-                    task={task}
-                    onToggleComplete={toggleTaskComplete}
-                    onDelete={deleteTask}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Empty State */}
-          {tasks.length === 0 && (
+          <TabsContent value="analytics" className="space-y-4">
             <div className="text-center py-12">
-              <div className="p-6 bg-gradient-to-br from-muted/30 to-muted/10 rounded-3xl mb-4 inline-block">
-                <CheckSquare className="h-16 w-16 text-muted-foreground mx-auto" />
-              </div>
+              <BarChart3 className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
               <h3 className="text-xl font-semibold text-foreground mb-2">
-                ¡Comienza tu productividad!
+                Estadísticas Detalladas
               </h3>
               <p className="text-muted-foreground">
-                Agrega tu primera tarea para empezar a organizar tu día.
+                Próximamente: gráficos de rendimiento, análisis por ubicación y más.
               </p>
             </div>
-          )}
-        </div>
+          </TabsContent>
+        </Tabs>
+
+        {/* Visit Modal */}
+        <VisitModal
+          isOpen={!!selectedLocationId}
+          onClose={() => setSelectedLocationId(null)}
+          location={selectedLocation}
+          colors={BOX_COLORS}
+          locationStatus={selectedLocation ? locationStatuses[selectedLocation.id] : null}
+          onSubmit={handleVisitSubmit}
+        />
       </div>
     </div>
   );
