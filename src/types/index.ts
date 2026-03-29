@@ -1,7 +1,14 @@
+export interface Route {
+  id: string;
+  name: string;
+  locations: Location[];
+}
+
 export interface Location {
   id: string;
   name: string;
   address: string;
+  routeId: string;
   coordinates?: {
     lat: number;
     lng: number;
@@ -9,7 +16,7 @@ export interface Location {
   notes?: string;
 }
 
-export interface BoxColor {
+export interface Action {
   id: string;
   name: string;
   hexColor: string;
@@ -19,19 +26,19 @@ export interface BoxColor {
 export interface Visit {
   id: string;
   locationId: string;
-  colorId: string;
-  round: number; // 1, 2, or 3
-  week: number; // 1, 2, or 3
+  actionId: string;
+  round: number;
+  week: number;
   date: Date;
   status: 'proposed' | 'delivered';
-  photo?: string; // base64 or file path
+  photo?: string;
   notes?: string;
   createdAt: Date;
   updatedAt: Date;
 }
 
 export interface InventoryItem {
-  colorId: string;
+  actionId: string;
   available: number;
   proposed: number;
   delivered: number;
@@ -39,7 +46,7 @@ export interface InventoryItem {
 
 export interface LocationStatus {
   locationId: string;
-  colorsDelivered: string[]; // Array of color IDs that have been delivered
+  actionsDelivered: string[];
   totalProposed: number;
   totalDelivered: number;
   lastVisitDate?: Date;
